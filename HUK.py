@@ -569,49 +569,67 @@ with tab2:
                 + ("⚠️ CRITICAL PATH" if r["Critical"] else f"Float: {r['Float']} days")
             ), axis=1)
 
-            # Zoom to this phase's date window so bars are always visible
-            ph_min = pt["Start_Date"].min() - pd.Timedelta(days=3)
-            ph_max = pt["End_Date"].max()   + pd.Timedelta(days=3)
+            # Zoom to this phase's date window
+            ph_min = pt["Start_Date"].min() - pd.Timedelta(days=2)
+            ph_max = pt["End_Date"].max()   + pd.Timedelta(days=2)
+            ph_span_days = max((ph_max - ph_min).days, 1)
+
+            # Enforce minimum display width so short tasks are always visible
+            # (at least 3% of the phase window, never less than 2 days shown)
+            min_display_days = max(2, ph_span_days * 0.03)
+            pt_vis = pt.copy()
+            pt_vis["Disp_End"] = pt_vis.apply(
+                lambda r: max(
+                    r["End_Date"],
+                    r["Start_Date"] + pd.Timedelta(days=int(min_display_days))
+                ), axis=1
+            )
 
             fig_ph = px.timeline(
-                pt,
+                pt_vis,
                 x_start="Start_Date",
-                x_end="End_Date",
+                x_end="Disp_End",          # display end (stretched if needed)
                 y="Label",
                 color="Bar_Color",
                 color_discrete_map="identity",
-                custom_data=["Hover"],
+                custom_data=["Hover"],     # hover still shows real dates
             )
-            fig_ph.update_traces(hovertemplate="%{customdata[0]}<extra></extra>")
+            fig_ph.update_traces(
+                hovertemplate="%{customdata[0]}<extra></extra>",
+                textposition="inside",
+            )
             fig_ph.update_yaxes(autorange="reversed")
             fig_ph.update_layout(
                 **DARK,
-                height=max(200, len(pt) * 38 + 60),
-                margin=dict(l=10, r=20, t=20, b=20),
+                height=max(200, len(pt) * 42 + 70),
+                margin=dict(l=20, r=20, t=20, b=20),
                 xaxis=dict(
                     gridcolor="#21262d", tickformat="%d %b '%y",
                     range=[ph_min, ph_max], tickangle=-20,
                     automargin=True,
                 ),
-                yaxis=dict(gridcolor="#21262d", automargin=True),
+                yaxis=dict(
+                    gridcolor="#21262d", automargin=True,
+                    tickfont=dict(size=11),
+                ),
                 showlegend=False,
             )
-            # Only draw ref lines if they fall inside this phase window
+            # Reference lines only if inside phase window
             _today_ts   = pd.Timestamp(today_str)
             _opening_ts = pd.Timestamp(opening_str)
             if ph_min <= _today_ts <= ph_max:
                 fig_ph.add_shape(type="line", x0=today_str, x1=today_str, y0=0, y1=1,
                                  xref="x", yref="paper",
-                                 line=dict(color="#58a6ff", dash="dot", width=1))
+                                 line=dict(color="#58a6ff", dash="dot", width=1.5))
                 fig_ph.add_annotation(x=today_str, y=1, xref="x", yref="paper",
                                       text="Today", showarrow=False,
                                       font=dict(color="#58a6ff", size=10), yanchor="bottom")
             if ph_min <= _opening_ts <= ph_max:
                 fig_ph.add_shape(type="line", x0=opening_str, x1=opening_str, y0=0, y1=1,
                                  xref="x", yref="paper",
-                                 line=dict(color="#ff7b72", dash="dash", width=1.5))
+                                 line=dict(color="#ff7b72", dash="dash", width=2))
                 fig_ph.add_annotation(x=opening_str, y=0.92, xref="x", yref="paper",
-                                      text="Opening", showarrow=False,
+                                      text="🎯 Opening", showarrow=False,
                                       font=dict(color="#ff7b72", size=10), yanchor="bottom")
             st.plotly_chart(fig_ph, use_container_width=True)
 
@@ -1051,64 +1069,111 @@ if st.button("📄 Generate Management Report", type="secondary"):
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
         )
 
-        # Phase detail charts
-        # Fix: zoom each chart to its own date range so short tasks are visible
+        # Phase detail — pure HTML/CSS Gantt (no Plotly)
+        # Bars are always fully visible regardless of task duration
+        def make_css_gantt(phase_df, ph_color):
+            ph_start = phase_df["Start_Date"].min()
+            ph_end   = phase_df["End_Date"].max()
+            span     = max((ph_end - ph_start).days, 1)
+
+            # 5 evenly spaced date markers
+            marks_html = ""
+            for i in range(6):
+                pct  = i * 20
+                d    = ph_start + pd.Timedelta(days=int(span * pct / 100))
+                marks_html += (
+                    f'<div style="position:absolute;left:{pct}%;'
+                    f'font-size:0.6rem;color:#9ca3af;white-space:nowrap;'
+                    f'transform:translateX(-50%)">{d.strftime("%d %b")}</div>'
+                )
+
+            # Today / Opening markers (only if inside phase window)
+            overlay_html = ""
+            _today_ts   = pd.Timestamp.today().normalize()
+            _opening_ts = pd.Timestamp(opening_str)
+            if ph_start <= _today_ts <= ph_end:
+                pct = max(0, min(100, (_today_ts - ph_start).days / span * 100))
+                overlay_html += (
+                    f'<div style="position:absolute;left:{pct:.1f}%;top:0;bottom:0;'
+                    f'width:2px;background:#2563eb;opacity:0.5;z-index:2"></div>'
+                    f'<div style="position:absolute;left:{pct:.1f}%;top:-14px;'
+                    f'font-size:0.58rem;color:#2563eb;transform:translateX(-50%);'
+                    f'font-weight:600">Today</div>'
+                )
+            if ph_start <= _opening_ts <= ph_end:
+                pct = max(0, min(100, (_opening_ts - ph_start).days / span * 100))
+                overlay_html += (
+                    f'<div style="position:absolute;left:{pct:.1f}%;top:0;bottom:0;'
+                    f'width:2px;background:#dc2626;opacity:0.7;z-index:2;'
+                    f'border-left:2px dashed #dc2626"></div>'
+                    f'<div style="position:absolute;left:{pct:.1f}%;top:-14px;'
+                    f'font-size:0.58rem;color:#dc2626;transform:translateX(-50%);'
+                    f'font-weight:700">&#127919; Opening</div>'
+                )
+
+            rows_html = ""
+            for _, row in phase_df.sort_values("Start_Day").iterrows():
+                offset_pct = (row["Start_Date"] - ph_start).days / span * 100
+                # Minimum 2% width so 1-day tasks are always clearly visible
+                width_pct  = max(2.0, row["Duration"] / span * 100)
+                color      = "#dc2626" if row["Critical"] else ph_color
+                name_style = "font-weight:700;color:#991b1b" if row["Critical"] else "color:#1f2937"
+                cp_dot     = "&#9679; " if row["Critical"] else ""
+                dur_label  = f"{int(row['Duration'])}d"
+                date_label = f"{row['Start_Date'].strftime('%d %b')} &ndash; {row['End_Date'].strftime('%d %b')}"
+                stk        = row.get("Stakeholders", "")
+
+                rows_html += (
+                    f'<div style="display:grid;grid-template-columns:180px 1fr 110px;'
+                    f'border-bottom:1px solid #f3f4f6;min-height:34px;align-items:center">'
+
+                    # Task name column
+                    f'<div style="padding:5px 10px;font-size:0.78rem;{name_style}'
+                    f';overflow:hidden;text-overflow:ellipsis;white-space:nowrap"'
+                    f' title="{row["Task"]}">{cp_dot}{row["Task"]}</div>'
+
+                    # Bar track column
+                    f'<div style="position:relative;padding:5px 6px;background:#fafafa;'
+                    f'height:34px;display:flex;align-items:center">'
+                    + overlay_html +
+                    f'<div style="margin-left:{offset_pct:.2f}%;width:{width_pct:.2f}%;'
+                    f'min-width:14px;height:20px;background:{color};border-radius:3px;'
+                    f'display:flex;align-items:center;padding:0 5px;position:relative;z-index:3">'
+                    f'<span style="font-size:0.62rem;color:rgba(255,255,255,0.95);'
+                    f'font-weight:600;white-space:nowrap;overflow:hidden">{dur_label}</span>'
+                    f'</div></div>'
+
+                    # Date column
+                    f'<div style="padding:5px 8px;font-size:0.68rem;color:#6b7280;'
+                    f'text-align:right;white-space:nowrap">{date_label}</div>'
+
+                    f'</div>'
+                )
+
+            return (
+                f'<div style="border:1px solid #e5e7eb;border-radius:6px;'
+                f'overflow:hidden;font-family:Arial,sans-serif">'
+                # Header
+                f'<div style="display:grid;grid-template-columns:180px 1fr 110px;'
+                f'background:#f3f4f6;border-bottom:2px solid #e5e7eb">'
+                f'<div style="padding:6px 10px;font-size:0.65rem;font-weight:700;'
+                f'text-transform:uppercase;letter-spacing:0.5px;color:#6b7280">Task</div>'
+                f'<div style="position:relative;padding:18px 6px 6px;height:36px">'
+                + marks_html +
+                f'</div>'
+                f'<div style="padding:6px 8px;font-size:0.65rem;font-weight:700;'
+                f'text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;'
+                f'text-align:right">Dates</div>'
+                f'</div>'
+                + rows_html +
+                f'</div>'
+            )
+
         phase_detail_html = ""
         for phase in phases_ordered:
             pt_p = gantt_df[gantt_df["Phase"] == phase].copy()
             if pt_p.empty:
                 continue
-            pt_p = pt_p.copy()
-            pt_p["Color"] = pt_p["Critical"].apply(
-                lambda c: "#dc2626" if c else PRINT_PHASE.get(phase, "#2563eb")
-            )
-            pt_p["Label"] = pt_p.apply(
-                lambda r: f"* {r['Task']}" if r["Critical"] else r["Task"], axis=1
-            )
-
-            # Zoom x-axis to THIS phase only (+ small padding)
-            ph_x_min = pt_p["Start_Date"].min() - pd.Timedelta(days=5)
-            ph_x_max = pt_p["End_Date"].max()   + pd.Timedelta(days=5)
-
-            fp = px.timeline(pt_p, x_start="Start_Date", x_end="End_Date",
-                             y="Label", color="Color", color_discrete_map="identity")
-            fp.update_yaxes(autorange="reversed")
-            fp.update_layout(
-                **PRINT_STYLE,
-                height=max(180, len(pt_p) * 38 + 70),
-                # Large left margin so full task names are never clipped
-                margin=dict(l=220, r=20, t=15, b=15),
-                showlegend=False,
-                xaxis=dict(
-                    gridcolor="#e5e7eb", tickformat="%d %b '%y",
-                    linecolor="#d1d5db",
-                    range=[ph_x_min, ph_x_max],   # KEY: zoom to phase window
-                    tickangle=-30,
-                ),
-                yaxis=dict(
-                    gridcolor="#e5e7eb", linecolor="#d1d5db",
-                    tickfont=dict(size=11, color="#111827"),
-                    automargin=True,
-                ),
-            )
-
-            # Only draw Today / Opening lines if they fall inside this phase window
-            today_ts   = pd.Timestamp(today_str)
-            opening_ts = pd.Timestamp(opening_str)
-            if ph_x_min <= today_ts <= ph_x_max:
-                fp.add_shape(type="line", x0=today_str, x1=today_str, y0=0, y1=1,
-                             xref="x", yref="paper",
-                             line=dict(color="#2563eb", dash="dot", width=1.5))
-                fp.add_annotation(x=today_str, y=1, xref="x", yref="paper",
-                                  text="Today", showarrow=False,
-                                  font=dict(color="#2563eb", size=9), yanchor="bottom")
-            if ph_x_min <= opening_ts <= ph_x_max:
-                fp.add_shape(type="line", x0=opening_str, x1=opening_str, y0=0, y1=1,
-                             xref="x", yref="paper",
-                             line=dict(color="#dc2626", dash="dash", width=2))
-                fp.add_annotation(x=opening_str, y=0.92, xref="x", yref="paper",
-                                  text="Opening", showarrow=False,
-                                  font=dict(color="#dc2626", size=9), yanchor="bottom")
             cost_sum   = int(tasks[tasks["Phase"] == phase]["Cost_AED"].sum())
             actual_sum = int(tasks[tasks["Phase"] == phase]["Actual_Cost_AED"].sum())
             stk_list   = ", ".join(sorted(set(
@@ -1116,8 +1181,9 @@ if st.button("📄 Generate Management Report", type="secondary"):
                 for row in tasks[tasks["Phase"] == phase]["Stakeholders"].tolist()
                 for s in str(row).split(",") if s.strip()
             )))
-            ph_color = PRINT_PHASE.get(phase, "#2563eb")
-            chart_h  = max(160, len(pt_p) * 32 + 60)
+            ph_color  = PRINT_PHASE.get(phase, "#2563eb")
+            gantt_css = make_css_gantt(pt_p, ph_color)
+
             phase_detail_html += (
                 f'<div class="phase-block">'
                 f'<div class="phase-title" style="border-left:4px solid {ph_color}">'
@@ -1125,8 +1191,9 @@ if st.button("📄 Generate Management Report", type="secondary"):
                 f'<span class="phase-meta">{len(pt_p)} tasks &nbsp;&middot;&nbsp; '
                 f'Budget AED {cost_sum:,.0f} &nbsp;&middot;&nbsp; '
                 f'Spent AED {actual_sum:,.0f}</span></div>'
-                + fig_to_html(fp, chart_h)
-                + f'<div class="stk-row"><b>Stakeholders:</b> {stk_list}</div>'
+                + gantt_css
+                + f'<div class="stk-row" style="margin-top:0.3rem">'
+                f'<b>Stakeholders:</b> {stk_list}</div>'
                 + '</div>'
             )
 
