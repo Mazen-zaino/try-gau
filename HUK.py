@@ -937,167 +937,516 @@ with tab6:
         )
 
 # ─────────────────────────────────────────────
-# PRINT / EXPORT HTML REPORT
+# PROFESSIONAL MANAGEMENT REPORT
 # ─────────────────────────────────────────────
 st.divider()
-st.markdown("### 🖨️ Export & Print")
-st.caption("Generates a self-contained HTML report. Open in browser → Ctrl+P to print.")
+st.markdown("### 🖨️ Management Report")
+st.caption("Professional report ready for leadership. Download → open in Chrome → Ctrl+P to print or Save as PDF.")
 
-if st.button("📄 Generate Printable Report", type="secondary"):
+if st.button("📄 Generate Management Report", type="secondary"):
     with st.spinner("Building report…"):
 
-        def fig_html(fig, height=400):
-            fig.update_layout(height=height)
+        PRINT_STYLE = dict(
+            paper_bgcolor="white", plot_bgcolor="#f9fafb",
+            font=dict(color="#1f2937", family="Arial, sans-serif"),
+        )
+        PRINT_PHASE = {
+            "Phase 0": "#2563eb", "Design": "#7c3aed",
+            "Procurement": "#d97706", "Authority": "#ea580c",
+            "Pre-Execution": "#0891b2", "Execution": "#16a34a",
+            "Testing": "#15803d", "Opening": "#dc2626",
+        }
+
+        def fig_to_html(fig, h=320):
+            fig.update_layout(height=h)
             return fig.to_html(full_html=False, include_plotlyjs=False)
 
-        # Re-build key figures for the report
-        fig_m2 = px.timeline(phase_agg, x_start="Start_Date", x_end="End_Date",
-                              y="Phase", color="Phase", color_discrete_map=PHASE_COLORS)
-        fig_m2.update_yaxes(autorange="reversed")
-        fig_m2.update_layout(**DARK, height=320, margin=dict(l=10,r=10,t=20,b=20),
-                              showlegend=False,
-                              xaxis=dict(gridcolor="#21262d", tickformat="%b %Y"),
-                              yaxis=dict(gridcolor="#21262d"))
-        add_reference_lines(fig_m2)
+        def add_print_lines(fig):
+            fig.add_shape(type="line", x0=today_str, x1=today_str, y0=0, y1=1,
+                          xref="x", yref="paper",
+                          line=dict(color="#2563eb", dash="dot", width=1.5))
+            fig.add_annotation(x=today_str, y=1, xref="x", yref="paper",
+                               text="Today", showarrow=False,
+                               font=dict(color="#2563eb", size=10), yanchor="bottom")
+            fig.add_shape(type="line", x0=opening_str, x1=opening_str, y0=0, y1=1,
+                          xref="x", yref="paper",
+                          line=dict(color="#dc2626", dash="dash", width=2))
+            fig.add_annotation(x=opening_str, y=0.92, xref="x", yref="paper",
+                               text="Opening", showarrow=False,
+                               font=dict(color="#dc2626", size=10), yanchor="bottom")
+            return fig
 
-        # Cost chart
-        fig_bva2 = go.Figure()
-        bva2 = tasks[tasks["Cost_AED"] > 0].sort_values("Cost_AED", ascending=False).head(15)
-        fig_bva2.add_trace(go.Bar(name="Budget", x=bva2["Task"], y=bva2["Cost_AED"], marker_color="#58a6ff"))
-        fig_bva2.add_trace(go.Bar(name="Actual", x=bva2["Task"], y=bva2["Actual_Cost_AED"], marker_color="#3fb950"))
-        fig_bva2.update_layout(**DARK, barmode="group", height=300,
-                                margin=dict(l=10,r=10,t=20,b=10),
-                                xaxis=dict(gridcolor="#21262d", tickangle=-35),
-                                yaxis=dict(gridcolor="#21262d"),
-                                legend=dict(orientation="h"))
+        # RAG status
+        if on_time_pct >= 70:
+            rag_color = "#059669"; rag_bg = "#ecfdf5"; rag_text = "ON TRACK"
+            rag_icon = "✅"
+            rag_desc = "Project is progressing as planned. Monitor critical path closely."
+        elif on_time_pct >= 40:
+            rag_color = "#d97706"; rag_bg = "#fffbeb"; rag_text = "AT RISK"
+            rag_icon = "⚠️"
+            rag_desc = "Schedule pressure detected. Immediate management attention required."
+        else:
+            rag_color = "#dc2626"; rag_bg = "#fef2f2"; rag_text = "CRITICAL"
+            rag_icon = "🔴"
+            rag_desc = "Opening date is at serious risk. Escalation and recovery plan needed."
 
-        # Risk register HTML table
-        rr = risk_reg[["Phase","Task","Duration","Risk_Score","Impact","Critical","P95 Finish","Stakeholders"]]
-        rr_html = rr.sort_values("Risk_Score", ascending=False).to_html(index=False, border=0)
+        budget_rag  = "#059669" if budget_status == "under" else "#dc2626"
+        budget_icon = "✅" if budget_status == "under" else "🔴"
+        start_rag   = "#dc2626" if days_to_start < 0 else "#059669"
+        start_icon  = "⚠️" if days_to_start < 0 else "✅"
+        start_note  = (f"Should have started {abs(days_to_start)} days ago"
+                       if days_to_start < 0 else f"Starts in {days_to_start} days")
+        budget_variance_note = ("Under" if budget_status == "under" else "Over")
 
-        # Cost tracker HTML table
-        ct_html = cost_track.to_html(index=False, border=0)
+        # Master Gantt (light)
+        fig_gantt_p = px.timeline(
+            phase_agg, x_start="Start_Date", x_end="End_Date",
+            y="Phase", color="Phase", color_discrete_map=PRINT_PHASE,
+        )
+        fig_gantt_p.update_yaxes(autorange="reversed")
+        fig_gantt_p.update_layout(
+            **PRINT_STYLE, height=300, showlegend=False,
+            margin=dict(l=10, r=10, t=20, b=20),
+            xaxis=dict(gridcolor="#e5e7eb", tickformat="%b '%y", linecolor="#d1d5db"),
+            yaxis=dict(gridcolor="#e5e7eb", linecolor="#d1d5db"),
+        )
+        add_print_lines(fig_gantt_p)
 
-        # Phase detail charts HTML
-        phase_charts_html = ""
+        # Budget vs Actual (light)
+        bva_p = tasks[tasks["Cost_AED"] > 0].sort_values("Cost_AED", ascending=False).head(12)
+        fig_cost_p = go.Figure()
+        fig_cost_p.add_trace(go.Bar(name="Budget", x=bva_p["Task"], y=bva_p["Cost_AED"],
+                                    marker_color="#93c5fd"))
+        fig_cost_p.add_trace(go.Bar(name="Actual", x=bva_p["Task"], y=bva_p["Actual_Cost_AED"],
+                                    marker_color="#1d4ed8"))
+        fig_cost_p.update_layout(
+            **PRINT_STYLE, barmode="group", height=280,
+            margin=dict(l=10, r=10, t=10, b=60),
+            xaxis=dict(gridcolor="#e5e7eb", tickangle=-30, linecolor="#d1d5db"),
+            yaxis=dict(gridcolor="#e5e7eb", title="AED", linecolor="#d1d5db"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        )
+
+        # Phase detail charts
+        phase_detail_html = ""
         for phase in phases_ordered:
-            pt2 = gantt_df[gantt_df["Phase"] == phase].copy()
-            if pt2.empty:
+            pt_p = gantt_df[gantt_df["Phase"] == phase].copy()
+            if pt_p.empty:
                 continue
-            pt2["Bar_Color"] = pt2["Critical"].apply(
-                lambda c: "#f85149" if c else PHASE_COLORS.get(phase, "#58a6ff")
+            pt_p = pt_p.copy()
+            pt_p["Color"] = pt_p["Critical"].apply(
+                lambda c: "#dc2626" if c else PRINT_PHASE.get(phase, "#2563eb")
             )
-            pt2["Label"] = pt2.apply(
-                lambda r: f"🔴 {r['Task']}" if r["Critical"] else r["Task"], axis=1
+            pt_p["Label"] = pt_p.apply(
+                lambda r: f"* {r['Task']}" if r["Critical"] else r["Task"], axis=1
             )
-            f = px.timeline(pt2, x_start="Start_Date", x_end="End_Date",
-                            y="Label", color="Bar_Color", color_discrete_map="identity")
-            f.update_yaxes(autorange="reversed")
-            f.update_layout(**DARK, height=max(180, len(pt2)*35+60),
-                            margin=dict(l=10,r=10,t=20,b=20), showlegend=False,
-                            xaxis=dict(gridcolor="#21262d", tickformat="%d %b"),
-                            yaxis=dict(gridcolor="#21262d"))
-            add_reference_lines(f)
-            phase_charts_html += f"""
-            <h3 style="color:#c9d1d9;margin-top:2rem">{phase}</h3>
-            {fig_html(f, max(180, len(pt2)*35+60))}
-            """
+            fp = px.timeline(pt_p, x_start="Start_Date", x_end="End_Date",
+                             y="Label", color="Color", color_discrete_map="identity")
+            fp.update_yaxes(autorange="reversed")
+            fp.update_layout(
+                **PRINT_STYLE,
+                height=max(160, len(pt_p) * 32 + 60),
+                margin=dict(l=10, r=10, t=10, b=10),
+                showlegend=False,
+                xaxis=dict(gridcolor="#e5e7eb", tickformat="%d %b", linecolor="#d1d5db"),
+                yaxis=dict(gridcolor="#e5e7eb", linecolor="#d1d5db", tickfont=dict(size=11)),
+            )
+            add_print_lines(fp)
+            cost_sum   = int(tasks[tasks["Phase"] == phase]["Cost_AED"].sum())
+            actual_sum = int(tasks[tasks["Phase"] == phase]["Actual_Cost_AED"].sum())
+            stk_list   = ", ".join(sorted(set(
+                s.strip()
+                for row in tasks[tasks["Phase"] == phase]["Stakeholders"].tolist()
+                for s in str(row).split(",") if s.strip()
+            )))
+            ph_color = PRINT_PHASE.get(phase, "#2563eb")
+            chart_h  = max(160, len(pt_p) * 32 + 60)
+            phase_detail_html += (
+                f'<div class="phase-block">'
+                f'<div class="phase-title" style="border-left:4px solid {ph_color}">'
+                f'<span>{phase}</span>'
+                f'<span class="phase-meta">{len(pt_p)} tasks &nbsp;&middot;&nbsp; '
+                f'Budget AED {cost_sum:,.0f} &nbsp;&middot;&nbsp; '
+                f'Spent AED {actual_sum:,.0f}</span></div>'
+                + fig_to_html(fp, chart_h)
+                + f'<div class="stk-row"><b>Stakeholders:</b> {stk_list}</div>'
+                + '</div>'
+            )
 
-        html_report = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Fitout Project Report — {pd.to_datetime(opening_date).strftime('%d %b %Y')}</title>
-<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;700&family=DM+Mono&display=swap');
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ background: #0d1117; color: #c9d1d9; font-family: 'DM Sans', sans-serif; padding: 2rem; }}
-  h1 {{ color: #f0f6fc; font-size: 1.6rem; margin-bottom: 0.3rem; }}
-  h2 {{ color: #c9d1d9; font-size: 1.1rem; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid #21262d; padding-bottom: 0.4rem; }}
-  h3 {{ color: #c9d1d9; font-size: 0.95rem; }}
-  .subtitle {{ color: #8b949e; font-size: 0.85rem; margin-bottom: 1.5rem; }}
-  .kpi-row {{ display: grid; grid-template-columns: repeat(4,1fr); gap: 1rem; margin: 1.5rem 0; }}
-  .kpi {{ background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 1rem; }}
-  .kpi-label {{ font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1.5px; color: #8b949e; }}
-  .kpi-value {{ font-size: 1.4rem; font-weight: 700; color: #f0f6fc; font-family: 'DM Mono', monospace; margin-top: 0.2rem; }}
-  .kpi-sub {{ font-size: 0.7rem; color: #8b949e; margin-top: 0.2rem; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 0.5rem; }}
-  th {{ background: #161b22; color: #8b949e; text-align: left; padding: 6px 8px; font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; }}
-  td {{ padding: 6px 8px; border-bottom: 1px solid #21262d; color: #c9d1d9; }}
-  tr:hover td {{ background: #161b22; }}
-  .page-break {{ page-break-before: always; }}
-  @media print {{
-    body {{ background: #fff; color: #111; padding: 0.5cm; }}
-    h1,h2,h3 {{ color: #111 !important; }}
-    .kpi {{ background: #f5f5f5; border-color: #ddd; }}
-    .kpi-label,.kpi-sub {{ color: #666 !important; }}
-    .kpi-value {{ color: #111 !important; }}
-    table {{ font-size: 0.7rem; }}
-    th {{ background: #eee; color: #444; }}
-    td {{ color: #111; border-color: #ddd; }}
-    @page {{ margin: 1cm; size: A4 landscape; }}
-  }}
-</style>
-</head>
-<body>
-<h1>🏗️ Fitout Project Report</h1>
-<div class="subtitle">Generated {pd.Timestamp.today().strftime('%d %b %Y %H:%M')} &nbsp;·&nbsp;
-Target Opening: <strong>{pd.to_datetime(opening_date).strftime('%d %b %Y')}</strong> &nbsp;·&nbsp;
-Implied Start: <strong>{project_start.strftime('%d %b %Y')}</strong></div>
+        # Top risk rows
+        risk_t2 = tasks.copy()
+        risk_t2["Risk_Score"] = risk_t2["Duration"] * risk_t2["Uncertainty"]
+        top_risks_rows = ""
+        for _, r in risk_t2.sort_values("Risk_Score", ascending=False).head(8).iterrows():
+            cp_flag = "Yes — Critical Path" if r["ID"] in critical_ids else "No"
+            impact  = "High" if r["Risk_Score"] > 50 else "Medium" if r["Risk_Score"] > 20 else "Low"
+            row_cls = "risk-high" if impact == "High" else "risk-med" if impact == "Medium" else "risk-low"
+            corr_row = sens_df[sens_df["ID"] == r["ID"]]
+            sensitivity = f"{corr_row.iloc[0]['Correlation']:.2f}" if not corr_row.empty else "-"
+            top_risks_rows += (
+                f'<tr class="{row_cls}">'
+                f"<td>{r['Phase']}</td>"
+                f"<td><b>{r['Task']}</b></td>"
+                f'<td style="text-align:center">{int(r["Duration"])}d</td>'
+                f'<td style="text-align:center">&plusmn;{r["Uncertainty"]}d</td>'
+                f'<td style="text-align:center;font-weight:700">{impact}</td>'
+                f'<td style="text-align:center">{sensitivity}</td>'
+                f"<td>{cp_flag}</td>"
+                "</tr>"
+            )
 
-<div class="kpi-row">
-  <div class="kpi">
-    <div class="kpi-label">Opening Date</div>
-    <div class="kpi-value">{pd.to_datetime(opening_date).strftime('%d %b %Y')}</div>
-    <div class="kpi-sub">{days_to_opening} days from today</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-label">On-Time Probability</div>
-    <div class="kpi-value">{on_time_pct:.0f}%</div>
-    <div class="kpi-sub">P80: {p80:.0f}d · P95: {p95:.0f}d</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-label">Base Duration</div>
-    <div class="kpi-value">{int(base_duration)}d</div>
-    <div class="kpi-sub">+ {int(buffer_days)}d buffer</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-label">Budget w/ Contingency</div>
-    <div class="kpi-value">AED {total_needed/1e6:.2f}M</div>
-    <div class="kpi-sub">Spent: AED {total_actual/1e6:.2f}M</div>
-  </div>
-</div>
+        # Actions
+        actions_html = ""
+        for i, (_, row) in enumerate(sens_df.head(5).iterrows(), 1):
+            urgency = "Immediate" if i <= 2 else "This week" if i == 3 else "Monitor"
+            u_color = "#dc2626" if urgency == "Immediate" else "#d97706" if urgency == "This week" else "#059669"
+            cp_note = " (Critical Path)" if row["ID"] in critical_ids else ""
+            actions_html += (
+                "<tr>"
+                f'<td><span style="color:{u_color};font-weight:700">{urgency}</span></td>'
+                f"<td><b>{row['Task']}</b>{cp_note}</td>"
+                f"<td>Sensitivity {row['Correlation']:.2f} — delays here directly impact the opening date. "
+                "Confirm schedule and escalate if at risk.</td>"
+                "</tr>"
+            )
 
-<h2>Master Gantt — Phase Overview</h2>
-{fig_html(fig_m2, 320)}
+        # Cost table
+        cost_rows_html = ""
+        for _, r in tasks[tasks["Cost_AED"] > 0].sort_values("Cost_AED", ascending=False).iterrows():
+            variance = int(r["Cost_AED"]) - int(r["Actual_Cost_AED"])
+            pct = (r["Actual_Cost_AED"] / r["Cost_AED"] * 100) if r["Cost_AED"] > 0 else 0
+            status = ("Not started" if r["Actual_Cost_AED"] == 0
+                      else "Over budget" if r["Actual_Cost_AED"] > r["Cost_AED"]
+                      else "On track")
+            s_color = "#6b7280" if status == "Not started" else "#dc2626" if status == "Over budget" else "#059669"
+            v_color = "#dc2626" if variance < 0 else "#059669"
+            cost_rows_html += (
+                "<tr>"
+                f"<td>{r['Phase']}</td>"
+                f"<td><b>{r['Task']}</b></td>"
+                f'<td style="text-align:right">AED {int(r["Cost_AED"]):,.0f}</td>'
+                f'<td style="text-align:right">AED {int(r["Actual_Cost_AED"]):,.0f}</td>'
+                f'<td style="text-align:right;color:{v_color}">AED {variance:,.0f}</td>'
+                f'<td style="text-align:center">{pct:.0f}%</td>'
+                f'<td style="color:{s_color};font-weight:600">{status}</td>'
+                "</tr>"
+            )
+        spent_pct = (total_actual / total_cost * 100) if total_cost > 0 else 0
+        var_total = total_cost - total_actual
+        v_total_color = "#dc2626" if var_total < 0 else "#059669"
 
-<div class="page-break"></div>
-<h2>Phase Breakdown — Task Detail</h2>
-{phase_charts_html}
+        # Stakeholder table
+        stk_summary_rows = ""
+        all_stk: dict = {}
+        for _, row in gantt_df.iterrows():
+            for s in str(row["Stakeholders"]).split(","):
+                s = s.strip()
+                if not s:
+                    continue
+                if s not in all_stk:
+                    all_stk[s] = {"phases": set(), "first": row["Start_Date"], "last": row["End_Date"]}
+                all_stk[s]["phases"].add(row["Phase"])
+                all_stk[s]["first"] = min(all_stk[s]["first"], row["Start_Date"])
+                all_stk[s]["last"]  = max(all_stk[s]["last"],  row["End_Date"])
+        for stk, info in sorted(all_stk.items(), key=lambda x: x[1]["first"]):
+            stk_summary_rows += (
+                "<tr>"
+                f"<td><b>{stk}</b></td>"
+                f"<td>{info['first'].strftime('%d %b %Y')}</td>"
+                f"<td>{info['last'].strftime('%d %b %Y')}</td>"
+                f"<td>{', '.join(sorted(info['phases']))}</td>"
+                "</tr>"
+            )
 
-<div class="page-break"></div>
-<h2>Risk Register</h2>
-{rr_html}
+        # Critical path flow
+        cp_flow_html = " &rarr; ".join(
+            f'<span class="cp-task">{t}</span>' for t in cp_names
+        )
 
-<h2 style="margin-top:2rem">Cost Tracker</h2>
-{ct_html}
+        report_date = pd.Timestamp.today().strftime("%d %B %Y")
+        ot_risk_label = (
+            "Low risk to opening date" if on_time_pct >= 70
+            else "Moderate risk — action required" if on_time_pct >= 40
+            else "High risk — immediate escalation needed"
+        )
+        ot_kpi_color = "#059669" if on_time_pct >= 70 else "#d97706" if on_time_pct >= 40 else "#dc2626"
+        ot_box_class = "green" if on_time_pct >= 70 else "amber" if on_time_pct >= 40 else "red"
+        start_box_class = "red" if days_to_start < 0 else "green"
+        start_status_note = ("Start date has passed — schedule at risk"
+                             if days_to_start < 0 else "On schedule to begin on time")
+        budget_box_class = "green" if budget_status == "under" else "red"
+        top_sens_name = sens_df.iloc[0]["Task"]
+        top_sens_corr = sens_df.iloc[0]["Correlation"]
+        highest_unc_phase = tasks.groupby("Phase")["Uncertainty"].mean().idxmax()
 
-<div class="page-break"></div>
-<h2>Budget vs Actual</h2>
-{fig_html(fig_bva2, 300)}
+        # Phase summary table rows
+        phase_summary_rows = ""
+        for _, row in phase_agg.iterrows():
+            s_date = row["Start_Date"].strftime("%d %b %Y") if hasattr(row["Start_Date"], "strftime") else str(row["Start_Date"])
+            e_date = row["End_Date"].strftime("%d %b %Y") if hasattr(row["End_Date"], "strftime") else str(row["End_Date"])
+            tc = int(phase_task_count.get(row["Phase"], 0))
+            bc = int(phase_cost.get(row["Phase"], 0))
+            phase_summary_rows += (
+                "<tr>"
+                f"<td><b>{row['Phase']}</b></td>"
+                f"<td>{s_date}</td><td>{e_date}</td>"
+                f'<td style="text-align:center">{row["Duration_Days"]} days</td>'
+                f'<td style="text-align:center">{tc}</td>'
+                f'<td style="text-align:right">AED {bc:,.0f}</td>'
+                "</tr>"
+            )
 
-<div style="margin-top:3rem;color:#8b949e;font-size:0.72rem">
-Critical path: {' → '.join(cp_names)}
-</div>
-</body>
-</html>"""
+        # ─── Build HTML ─────────────────────────
+        html = (
+            "<!DOCTYPE html>\n<html lang='en'>\n<head>\n"
+            "<meta charset='UTF-8'>\n"
+            f"<title>Fitout Project — Management Report — {pd.to_datetime(opening_date).strftime('%d %b %Y')}</title>\n"
+            "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>\n"
+            "<style>\n"
+            "*{box-sizing:border-box;margin:0;padding:0}\n"
+            "body{background:#fff;color:#1f2937;font-family:Arial,sans-serif;font-size:13px;line-height:1.5}\n"
+            ".cover{background:linear-gradient(135deg,#1e3a8a 0%,#1d4ed8 100%);color:#fff;padding:2.5rem 2.5rem 2rem;position:relative}\n"
+            ".cover h1{font-size:1.9rem;font-weight:700;margin-bottom:0.25rem;letter-spacing:-0.5px}\n"
+            ".cover .sub{font-size:0.85rem;opacity:0.8}\n"
+            ".cover .meta{margin-top:1rem;font-size:0.78rem;opacity:0.7}\n"
+            ".opening-badge{position:absolute;right:2.5rem;top:2rem;"
+            "background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.35);"
+            "border-radius:12px;padding:1rem 1.5rem;text-align:center}\n"
+            ".ob-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:1px;opacity:0.8}\n"
+            ".ob-date{font-size:1.45rem;font-weight:700;margin-top:0.2rem}\n"
+            ".ob-days{font-size:0.75rem;opacity:0.8;margin-top:0.1rem}\n"
+            ".status-banner{display:flex;align-items:center;gap:1rem;padding:0.85rem 2rem;"
+            "border-left-width:0}\n"
+            ".status-badge{font-weight:700;font-size:0.85rem;padding:0.3rem 1rem;border-radius:20px;white-space:nowrap;color:#fff}\n"
+            ".status-desc{font-size:0.85rem;color:#374151}\n"
+            ".section{padding:1.4rem 2.5rem;border-bottom:1px solid #f3f4f6}\n"
+            ".section h2{font-size:0.9rem;font-weight:700;color:#111827;text-transform:uppercase;"
+            "letter-spacing:0.5px;margin-bottom:1rem;padding-bottom:0.4rem;border-bottom:2px solid #e5e7eb}\n"
+            ".section h3{font-size:0.82rem;font-weight:700;color:#374151;margin:1rem 0 0.5rem}\n"
+            ".kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0.9rem;margin-bottom:1rem}\n"
+            ".kpi-box{border:1px solid #e5e7eb;border-radius:8px;padding:0.9rem 1.1rem}\n"
+            ".kpi-box.green{border-left:4px solid #059669}\n"
+            ".kpi-box.amber{border-left:4px solid #d97706}\n"
+            ".kpi-box.red{border-left:4px solid #dc2626}\n"
+            ".kpi-box.blue{border-left:4px solid #2563eb}\n"
+            ".kpi-label{font-size:0.62rem;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:0.25rem}\n"
+            ".kpi-value{font-size:1.5rem;font-weight:700;color:#111827;line-height:1}\n"
+            ".kpi-sub{font-size:0.7rem;color:#6b7280;margin-top:0.25rem}\n"
+            ".kpi-note{font-size:0.7rem;margin-top:0.25rem;font-weight:600}\n"
+            ".exec-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
+            "padding:1rem 1.2rem;font-size:0.83rem;color:#374151;line-height:1.75}\n"
+            ".cp-flow{display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center;margin-top:0.5rem}\n"
+            ".cp-task{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;"
+            "padding:3px 10px;border-radius:4px;font-size:0.75rem;font-weight:600}\n"
+            "table{width:100%;border-collapse:collapse;font-size:0.78rem;margin-top:0.4rem}\n"
+            "th{background:#f9fafb;color:#374151;font-weight:700;padding:7px 10px;"
+            "text-align:left;border-bottom:2px solid #e5e7eb;font-size:0.68rem;"
+            "text-transform:uppercase;letter-spacing:0.3px}\n"
+            "td{padding:6px 10px;border-bottom:1px solid #f3f4f6;vertical-align:top}\n"
+            "tr:hover td{background:#f9fafb}\n"
+            ".risk-high td{background:#fef2f2}\n"
+            ".risk-med td{background:#fffbeb}\n"
+            ".risk-low td{background:#f0fdf4}\n"
+            ".phase-block{margin-bottom:1.5rem}\n"
+            ".phase-title{display:flex;justify-content:space-between;align-items:center;"
+            "padding:0.5rem 0.8rem;background:#f9fafb;margin-bottom:0.4rem;border-radius:4px}\n"
+            ".phase-title span:first-child{font-weight:700;font-size:0.83rem;color:#111827}\n"
+            ".phase-meta{font-size:0.7rem;color:#6b7280}\n"
+            ".stk-row{font-size:0.72rem;color:#6b7280;margin-top:0.3rem;padding:0 0.3rem}\n"
+            ".footer{padding:0.8rem 2.5rem;background:#f9fafb;font-size:0.7rem;color:#9ca3af;text-align:center}\n"
+            ".page-break{page-break-before:always}\n"
+            "@media print{\n"
+            "@page{margin:1cm;size:A4 landscape}\n"
+            "body{font-size:11px}\n"
+            ".cover{-webkit-print-color-adjust:exact;print-color-adjust:exact}\n"
+            ".status-banner{-webkit-print-color-adjust:exact;print-color-adjust:exact}\n"
+            ".kpi-box{-webkit-print-color-adjust:exact;print-color-adjust:exact}\n"
+            ".risk-high td,.risk-med td,.risk-low td{-webkit-print-color-adjust:exact;print-color-adjust:exact}\n"
+            "}\n"
+            "</style>\n</head>\n<body>\n"
+
+            # COVER
+            "<div class='cover'>\n"
+            "<div class='opening-badge'>\n"
+            "<div class='ob-label'>Target Opening</div>\n"
+            f"<div class='ob-date'>{pd.to_datetime(opening_date).strftime('%d %b %Y')}</div>\n"
+            f"<div class='ob-days'>{days_to_opening} days from today</div>\n"
+            "</div>\n"
+            "<h1>Fitout Project</h1>\n"
+            "<div class='sub'>Management Report &nbsp;&middot;&nbsp; Confidential</div>\n"
+            f"<div class='meta'>Prepared: {report_date} &nbsp;&middot;&nbsp; "
+            f"Implied Start: {project_start.strftime('%d %b %Y')} &nbsp;&middot;&nbsp; "
+            f"Base Duration: {int(base_duration)} days + {int(buffer_days)}d buffer &nbsp;&middot;&nbsp; "
+            f"Monte Carlo: {runs:,} simulations</div>\n"
+            "</div>\n"
+
+            # STATUS BANNER
+            f"<div class='status-banner' style='background:{rag_bg};border-left:6px solid {rag_color}'>\n"
+            f"<div class='status-badge' style='background:{rag_color}'>{rag_icon} {rag_text}</div>\n"
+            f"<div class='status-desc'>{rag_desc} &nbsp;&middot;&nbsp; "
+            f"<b>On-Time Probability: {on_time_pct:.0f}%</b> &nbsp;&middot;&nbsp; "
+            f"{len(critical_ids)} tasks on critical path</div>\n"
+            "</div>\n"
+
+            # PAGE 1: EXECUTIVE DASHBOARD
+            "<div class='section'>\n"
+            "<h2>Executive Dashboard</h2>\n"
+            "<div class='kpi-grid'>\n"
+
+            f"<div class='kpi-box {ot_box_class}'>"
+            "<div class='kpi-label'>On-Time Probability</div>"
+            f"<div class='kpi-value'>{on_time_pct:.0f}%</div>"
+            f"<div class='kpi-sub'>Mean: {mean_days:.0f}d &nbsp;&middot;&nbsp; P80: {p80:.0f}d &nbsp;&middot;&nbsp; P95: {p95:.0f}d</div>"
+            f"<div class='kpi-note' style='color:{ot_kpi_color}'>{ot_risk_label}</div>"
+            "</div>\n"
+
+            "<div class='kpi-box blue'>"
+            "<div class='kpi-label'>Target Opening Date</div>"
+            f"<div class='kpi-value' style='font-size:1.15rem'>{pd.to_datetime(opening_date).strftime('%d %b %Y')}</div>"
+            f"<div class='kpi-sub'>{days_to_opening} days from today</div>"
+            f"<div class='kpi-note' style='color:#2563eb'>Implied start: {project_start.strftime('%d %b %Y')}</div>"
+            "</div>\n"
+
+            f"<div class='kpi-box {start_box_class}'>"
+            "<div class='kpi-label'>Project Start Status</div>"
+            f"<div class='kpi-value' style='font-size:1.05rem'>{start_icon} {start_note}</div>"
+            f"<div class='kpi-sub'>Implied start: {project_start.strftime('%d %b %Y')}</div>"
+            f"<div class='kpi-note' style='color:{start_rag}'>{start_status_note}</div>"
+            "</div>\n"
+
+            f"<div class='kpi-box {budget_box_class}'>"
+            "<div class='kpi-label'>Budget (with Contingency)</div>"
+            f"<div class='kpi-value' style='font-size:1.15rem'>AED {total_needed/1e6:.2f}M</div>"
+            f"<div class='kpi-sub'>Base AED {total_cost/1e6:.2f}M + {contingency_pct}% contingency</div>"
+            f"<div class='kpi-note' style='color:{budget_rag}'>{budget_icon} {budget_variance_note} approved budget by AED {abs(int(budget)-total_needed):,.0f}</div>"
+            "</div>\n"
+
+            "<div class='kpi-box blue'>"
+            "<div class='kpi-label'>Expenditure to Date</div>"
+            f"<div class='kpi-value' style='font-size:1.15rem'>AED {total_actual/1e6:.2f}M</div>"
+            f"<div class='kpi-sub'>of AED {total_cost/1e6:.2f}M total budget</div>"
+            f"<div class='kpi-note' style='color:#2563eb'>{spent_pct:.1f}% of base budget spent</div>"
+            "</div>\n"
+
+            "<div class='kpi-box amber'>"
+            "<div class='kpi-label'>Critical Path Tasks</div>"
+            f"<div class='kpi-value'>{len(critical_ids)}</div>"
+            "<div class='kpi-sub'>Any slip = direct delay to opening</div>"
+            f"<div class='kpi-note' style='color:#d97706'>Highest risk: {top_sens_name}</div>"
+            "</div>\n"
+
+            "</div>\n"  # end kpi-grid
+
+            "<h3>Executive Summary</h3>\n"
+            "<div class='exec-box'>"
+            f"This project is targeting an opening date of <b>{pd.to_datetime(opening_date).strftime('%d %b %Y')}</b>, "
+            f"with an implied start date of <b>{project_start.strftime('%d %b %Y')}</b> based on a "
+            f"<b>{int(base_duration)}-day base schedule</b> plus <b>{int(buffer_days)} days buffer</b>. "
+            f"Monte Carlo simulation across <b>{runs:,} scenarios</b> shows an on-time probability of "
+            f"<b>{on_time_pct:.0f}%</b>, with a P80 completion of <b>{p80:.0f} days</b> and P95 of <b>{p95:.0f} days</b>. "
+            f"The project has <b>{len(critical_ids)} tasks on the critical path</b> — any delay to these directly pushes the opening date. "
+            f"The highest schedule sensitivity is <b>{top_sens_name}</b> (sensitivity score: {top_sens_corr:.2f}). "
+            f"The highest uncertainty phase is <b>{highest_unc_phase}</b>. "
+            f"Budget stands at <b>AED {total_needed/1e6:.2f}M</b> including contingency, "
+            f"which is <b>{'within' if budget_status=='under' else 'over'}</b> the approved budget of <b>AED {int(budget)/1e6:.2f}M</b>."
+            "</div>\n"
+
+            "<h3 style='margin-top:1rem'>Critical Path</h3>\n"
+            f"<div class='cp-flow'>{cp_flow_html}</div>\n"
+            "</div>\n"  # end section
+
+            # PAGE 2: MASTER TIMELINE
+            "<div class='page-break'></div>\n"
+            "<div class='section'>\n"
+            "<h2>Master Project Timeline</h2>\n"
+            + fig_to_html(fig_gantt_p, 300)
+            + "\n<h3 style='margin-top:1rem'>Phase Schedule Summary</h3>\n"
+            "<table><tr>"
+            "<th>Phase</th><th>Start</th><th>End</th>"
+            "<th style='text-align:center'>Days</th>"
+            "<th style='text-align:center'>Tasks</th>"
+            "<th style='text-align:right'>Budget (AED)</th>"
+            "</tr>\n"
+            + phase_summary_rows
+            + "</table>\n</div>\n"
+
+            # PAGE 3: PHASE BREAKDOWN
+            "<div class='page-break'></div>\n"
+            "<div class='section'>\n"
+            "<h2>Phase Breakdown &mdash; Task Detail</h2>\n"
+            + phase_detail_html
+            + "</div>\n"
+
+            # PAGE 4: SCHEDULE RISK
+            "<div class='page-break'></div>\n"
+            "<div class='section'>\n"
+            "<h2>Schedule Risk Assessment</h2>\n"
+            "<p style='color:#6b7280;font-size:0.78rem;margin-bottom:0.8rem'>"
+            "Tasks ranked by risk score (duration &times; uncertainty). "
+            "Sensitivity shows impact on total project duration &mdash; higher = more impact on opening date.</p>\n"
+            "<table><tr>"
+            "<th>Phase</th><th>Task</th>"
+            "<th style='text-align:center'>Duration</th>"
+            "<th style='text-align:center'>Uncertainty</th>"
+            "<th style='text-align:center'>Impact</th>"
+            "<th style='text-align:center'>Sensitivity</th>"
+            "<th>Critical Path</th></tr>\n"
+            + top_risks_rows
+            + "</table>\n"
+            "<h3 style='margin-top:1.5rem'>Recommended Actions</h3>\n"
+            "<table><tr><th>Priority</th><th>Task</th><th>Action Required</th></tr>\n"
+            + actions_html
+            + "</table>\n</div>\n"
+
+            # PAGE 5: FINANCIAL
+            "<div class='page-break'></div>\n"
+            "<div class='section'>\n"
+            "<h2>Financial Summary</h2>\n"
+            + fig_to_html(fig_cost_p, 280)
+            + "\n<h3 style='margin-top:1rem'>Cost Tracker by Task</h3>\n"
+            "<table><tr>"
+            "<th>Phase</th><th>Task</th>"
+            "<th style='text-align:right'>Budget</th>"
+            "<th style='text-align:right'>Actual Spent</th>"
+            "<th style='text-align:right'>Variance</th>"
+            "<th style='text-align:center'>% Spent</th>"
+            "<th>Status</th></tr>\n"
+            + cost_rows_html
+            + f"<tr style='font-weight:700;background:#f3f4f6'>"
+            f"<td colspan='2'>TOTAL</td>"
+            f"<td style='text-align:right'>AED {total_cost:,.0f}</td>"
+            f"<td style='text-align:right'>AED {total_actual:,.0f}</td>"
+            f"<td style='text-align:right;color:{v_total_color}'>AED {var_total:,.0f}</td>"
+            f"<td style='text-align:center'>{spent_pct:.1f}%</td>"
+            f"<td></td></tr>\n"
+            "</table>\n</div>\n"
+
+            # PAGE 6: STAKEHOLDERS
+            "<div class='page-break'></div>\n"
+            "<div class='section'>\n"
+            "<h2>Stakeholder Engagement</h2>\n"
+            "<table><tr>"
+            "<th>Stakeholder</th>"
+            "<th>Engagement From</th>"
+            "<th>Engagement To</th>"
+            "<th>Phases Involved</th></tr>\n"
+            + stk_summary_rows
+            + "</table>\n</div>\n"
+
+            # FOOTER
+            "<div class='footer'>"
+            f"Fitout Optimization Engine &nbsp;&middot;&nbsp; Generated {report_date} "
+            "&nbsp;&middot;&nbsp; Confidential &mdash; Management Use Only"
+            "</div>\n"
+
+            "</body>\n</html>"
+        )
 
         st.download_button(
-            label="⬇️ Download HTML Report",
-            data=html_report,
+            label="⬇️ Download Management Report",
+            data=html,
             file_name=f"fitout_report_{pd.to_datetime(opening_date).strftime('%Y%m%d')}.html",
             mime="text/html",
             type="primary",
         )
-        st.success("Report ready! Download and open in Chrome/Edge, then Ctrl+P to print.")
+        st.success("✅ Report ready — open in Chrome or Edge, then Ctrl+P → Save as PDF for the cleanest output.")
